@@ -4,11 +4,13 @@ Scraper: webscraper.io/test-sites/e-commerce/static (BeautifulSoup)
 Demonstrates:
 - Query-parameter pagination (?page=N), stopping when a page returns
   zero products, instead of following a "next" link
-- Parsing nested/compound fields (star rating counted from icon elements,
-  not read as plain text)
+- Extracting a number from inconsistently-formatted text (review count is
+  rendered with no space, e.g. "2reviews") using a regex instead of
+  assuming a fixed format
 - Polite scraping: custom User-Agent + delay between requests
 """
 
+import re
 import csv
 import time
 from pathlib import Path
@@ -42,20 +44,22 @@ def scrape_page(page_num):
         desc_tag = thumb.find("p", class_="description")
         description = desc_tag.get_text(strip=True) if desc_tag else None
 
-        # Star rating is encoded as repeated <span class="glyphicon-star">
-        # icons, not a number in the text -- so we count elements instead
-        # of parsing text.
-        ratings_div = thumb.find("div", class_="ratings")
-        star_count = len(ratings_div.find_all("span", class_="glyphicon-star")) if ratings_div else 0
-
-        review_tag = thumb.find("p", class_="pull-right")
-        review_count = review_tag.get_text(strip=True) if review_tag else None
+        review_tag = thumb.find("p", class_="review-count")
+        # The site renders this as text like "3 reviews" -- we only want
+        # the leading number, so split on whitespace and take the first
+        # token. int() also strips it down cleanly (raises if the text
+        # ever doesn't start with a number, which is what we want --
+        # better to fail loudly than silently store garbage).
+        review_count = None
+        if review_tag:
+            review_text = review_tag.get_text(strip=True)
+            match = re.match(r"\d+", review_text)
+            review_count = int(match.group()) if match else None
 
         products.append({
             "title": title,
             "price": price,
             "description": description,
-            "stars": star_count,
             "reviews": review_count,
             "page": page_num,
         })
@@ -86,7 +90,7 @@ def scrape_all_pages(max_pages=50):
 def save_to_csv(products, path):
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["title", "price", "description", "stars", "reviews", "page"])
+        writer = csv.DictWriter(f, fieldnames=["title", "price", "description","reviews", "page"])
         writer.writeheader()
         writer.writerows(products)
 
